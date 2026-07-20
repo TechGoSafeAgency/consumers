@@ -1,0 +1,63 @@
+# Local / team container run: MongoDB + API.
+#
+# 1) cp .env.example .env
+# 2) Fill required secrets: JWT_*, RESEND_*, EMAIL_*, FRONTEND_URL (see README).
+# 3) For email/password only, remove or comment ALL Auth0 vars — partial values fail validation.
+# 4) docker compose up --build
+# 5) First time (indexes): docker compose run --rm api pnpm run migrate:mongo:up
+#
+# MONGODB_URI in .env is overridden below so the API uses the `mongo` service hostname.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: go-safe-mongo
+    restart: unless-stopped
+    ports:
+      - '${MONGO_HOST_PORT:-27017}:27017'
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: consumer:latest
+    container_name: consumer
+    ports:
+      - '${HOST_PORT:-3000}:3000'
+    env_file:
+      - .env
+    environment:
+      # Not localhost — from inside the container, Mongo is this service
+      MONGODB_URI: mongodb://mongo:27017
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+    volumes:
+      - api-logs:/app/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/v1/health-check',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+
+volumes:
+  mongo-data:
+  api-logs:

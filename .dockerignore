@@ -1,0 +1,39 @@
+# Dependencies and build output
+node_modules
+dist
+
+# Git and IDE
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Env (inject at runtime; keep example for reference only if needed)
+.env
+.env.*
+!.env.example
+
+# Docs and tests (not needed to build the image)
+*.md
+!README.md
+coverage
+**/*.test.ts
+**/*.spec.ts
+
+# Tooling caches
+.eslintcache
+.prettierignore
+.husky
+lint-staged
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Misc
+*.log
+logs
+npm-debug.log*
+pnpm-debug.log*
