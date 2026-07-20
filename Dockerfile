@@ -34,20 +34,11 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts
 
 COPY --from=builder /app/dist ./dist
-# Migrations (run `pnpm run migrate:mongo:up` before or at container start if you bundle migrate-mongo in prod)
-COPY database ./database
 
 # Winston file transports need a writable directory (official image provides `node`)
 RUN mkdir -p logs && chown -R node:node /app
 
 USER node
 
-EXPOSE 3000
-
-ENV PORT=3000
-
-# Uses PORT (default 3000) for the health probe
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/v1/health-check',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
-
-CMD ["node", "dist/app.js"]
+# Long-running RabbitMQ consumer (no HTTP server)
+CMD ["node", "dist/consumers/get-driver-verisk-queue.consumer.js"]

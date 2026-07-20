@@ -93,12 +93,10 @@ node dist/consumers/get-driver-verisk-queue.consumer.js
 
 ### Docker (optional)
 
-If you deploy with the included `Dockerfile`:
-
-1. Build the image as usual.
-2. **Override the container command** so it starts the consumer instead of `dist/app.js`:
+The included `Dockerfile` builds the project and starts the Verisk consumer by default:
 
 ```bash
+docker build -t go-safe-consumer:latest .
 docker run --rm \
   -e MONGO_DB_URI=... \
   -e RABBITMQ_URI=... \
@@ -107,8 +105,7 @@ docker run --rm \
   -e SOAP_FORCE_IPV4=true \
   -e WSDL_PREFETCH=true \
   -e WSDL_DISABLE_CACHE=true \
-  YOUR_IMAGE \
-  node dist/consumers/get-driver-verisk-queue.consumer.js
+  go-safe-consumer:latest
 ```
 
 ---
