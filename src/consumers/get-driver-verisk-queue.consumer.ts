@@ -240,6 +240,7 @@ async function startConsumer(): Promise<void> {
       await connection.close();
       await mongoClient.close();
     } catch (error) {
+      console.error('Error during consumer shutdown', error);
       logger.error('Error during consumer shutdown', { error });
     }
     process.exit(0);
@@ -254,6 +255,8 @@ async function startConsumer(): Promise<void> {
 }
 
 startConsumer().catch((error) => {
+  // Ensure Railway/Docker always see the failure even if Winston buffers
+  console.error('Failed to start Verisk consumer', error);
   logger.error('Failed to start Verisk consumer', { error });
   process.exit(1);
 });
