@@ -1,4 +1,4 @@
-import soap, { Client } from 'soap';
+import { createClientAsync, type Client } from 'soap';
 import amqp, { Channel, ChannelModel, ConsumeMessage } from 'amqplib';
 import { MongoClient } from 'mongodb';
 import { IMVRCase, IMVRCaseDAL, Queues } from '@/types';
@@ -179,7 +179,7 @@ async function startConsumer(): Promise<void> {
   const soapClientOptions = wsdlHandler.buildSoapClientOptions();
   const wsdl = await wsdlHandler.resolveWsdlLocationForSoap();
 
-  const soapClient: Client = await soap.createClientAsync(wsdl, soapClientOptions);
+  const soapClient: Client = await createClientAsync(wsdl, soapClientOptions);
 
   if (!soapClient) {
     throw new Error('Failed to create SOAP client');
