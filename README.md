@@ -51,6 +51,18 @@ Set these in your host (Railway Variables, Docker `-e`, systemd, etc.).
 
 Verisk account credentials are **not** taken from env vars. The consumer loads the active credential from MongoDB at startup.
 
+### Verisk / Imperva access
+
+Verisk sits behind **Imperva (Incapsula)**. A `403` whose HTML contains `_Incapsula_Resource` means the WAF is serving a bot challenge — not a simple firewall miss.
+
+Checklist with the provider:
+
+1. Use a **static outbound IPv4** for this Railway service.
+2. Ask them to allowlist that IP in **Imperva** with **bot-challenge bypass** (API/server allowlist), not only a network ACL.
+3. After deploy, check logs for `Public egress IP for Verisk/Imperva allowlisting` and confirm it matches what they allowlisted.
+
+Optional workaround for WSDL download only: vendor the WSDL (and related XSD imports) and set `WSDL_LOCAL_PATH`. SOAP calls to `expressnet.iix.com` still need Imperva access.
+
 ---
 
 ## Local run

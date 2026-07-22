@@ -147,6 +147,20 @@ export const wsdlHandlerFactory = ({
             typeof res.data === 'string'
               ? res.data.slice(0, MAX_ERROR_BODY_CHARS)
               : JSON.stringify(res.data).slice(0, MAX_ERROR_BODY_CHARS);
+          const isIncapsula =
+            typeof res.data === 'string' &&
+            (res.data.includes('Incapsula') || res.data.includes('_Incapsula_Resource'));
+
+          if (isIncapsula) {
+            throw new Error(
+              `WSDL prefetch blocked by Imperva/Incapsula (HTTP ${res.status}). ` +
+                'This is a WAF bot challenge, not a plain network firewall. ' +
+                'Ask Verisk to allowlist this service egress IPv4 in Imperva with bot-challenge bypass, ' +
+                'or set WSDL_LOCAL_PATH to a vendored WSDL bundle (SOAP calls to the same host may still be blocked). ' +
+                `Body: ${body}`,
+            );
+          }
+
           throw new Error(
             `WSDL prefetch failed: HTTP ${res.status} ${res.statusText ?? ''}`.trim() +
               (body ? ` — body: ${body}` : ''),

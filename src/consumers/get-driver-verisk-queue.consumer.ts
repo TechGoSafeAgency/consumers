@@ -164,6 +164,20 @@ async function processMessage(params: {
   }
 }
 
+async function logPublicEgressIp(): Promise<void> {
+  try {
+    const res = await fetch('https://api.ipify.org?format=json');
+    if (!res.ok) {
+      logger.warn(`Could not determine public egress IP (HTTP ${res.status})`);
+      return;
+    }
+    const data = (await res.json()) as { ip?: string };
+    logger.info('Public egress IP for Verisk/Imperva allowlisting', { egressIp: data.ip });
+  } catch (error) {
+    logger.warn('Could not determine public egress IP', { error });
+  }
+}
+
 async function startConsumer(): Promise<void> {
   const rabbitmqUri = config.rabbitmqUri;
   const mongoDBUri = config.mongoDBUri;
@@ -175,6 +189,8 @@ async function startConsumer(): Promise<void> {
   if (!mongoDBUri) {
     throw new Error('MONGO_DB_URI is required');
   }
+
+  await logPublicEgressIp();
 
   const soapClientOptions = wsdlHandler.buildSoapClientOptions();
   const wsdl = await wsdlHandler.resolveWsdlLocationForSoap();
