@@ -30,7 +30,7 @@ const wsdlHandler = wsdlHandlerFactory({
     Connection: 'keep-alive',
     Accept: 'text/html,application/xhtml+xml,application/xml,text/xml;q=0.9,*/*;q=0.8',
   },
-  wsdlLocalPath: undefined,
+  wsdlLocalPath: config.wsdlLocalPath,
 });
 
 async function processMessage(params: {

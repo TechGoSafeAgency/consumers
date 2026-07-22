@@ -8,4 +8,5 @@ export const config = {
   wsdlPrefetch: process.env.WSDL_PREFETCH === 'true',
   wsdlUrl: process.env.WSDL_URL ?? '',
   wsdlDisableCache: process.env.WSDL_DISABLE_CACHE === 'true',
+  wsdlLocalPath: process.env.WSDL_LOCAL_PATH || undefined,
 };

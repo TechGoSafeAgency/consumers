@@ -43,10 +43,11 @@ Set these in your host (Railway Variables, Docker `-e`, systemd, etc.).
 | Variable | Default / notes |
 | --- | --- |
 | `NODE_ENV` | Use `production` in deployed environments |
-| `SOAP_FORCE_IPV4` | `true` if IPv6 routes to Verisk fail |
+| `SOAP_FORCE_IPV4` | `true` if IPv6 routes to Verisk fail (also applies to WSDL prefetch) |
 | `SOAP_HTTP_TIMEOUT_MS` | `120000` |
-| `WSDL_PREFETCH` | `true` to download WSDL before SOAP client init |
+| `WSDL_PREFETCH` | `true` to download WSDL before SOAP client init (uses same IPv4-aware HTTP client) |
 | `WSDL_DISABLE_CACHE` | `true` to avoid stale WSDL cache |
+| `WSDL_LOCAL_PATH` | Optional path to a vendored `.wsdl` file (skips remote prefetch) |
 
 Verisk account credentials are **not** taken from env vars. The consumer loads the active credential from MongoDB at startup.
 
