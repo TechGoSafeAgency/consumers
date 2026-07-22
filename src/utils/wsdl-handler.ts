@@ -11,6 +11,48 @@ import { IWsdlHandler } from '@/types';
 const MAX_REDIRECTS = 10;
 const MAX_ERROR_BODY_CHARS = 500;
 
+type LookupCallback = (
+  err: NodeJS.ErrnoException | null,
+  addressOrAddresses: string | dns.LookupAddress[],
+  family?: number,
+) => void;
+
+/**
+ * Node 20+ may call Agent lookup with `{ all: true }` (happy eyeballs).
+ * Returning a single address in that mode yields `Invalid IP address: undefined`.
+ */
+const lookupIpv4Only = (
+  hostname: string,
+  options: dns.LookupOptions | number | LookupCallback | undefined,
+  callback?: LookupCallback,
+): void => {
+  let opts: dns.LookupOptions = {};
+  let cb = callback;
+
+  if (typeof options === 'function') {
+    cb = options;
+  } else if (typeof options === 'number') {
+    opts = { family: options };
+  } else if (options) {
+    opts = { ...options };
+  }
+
+  if (!cb) {
+    throw new Error('lookupIpv4Only requires a callback');
+  }
+
+  if (opts.all) {
+    dns.lookup(hostname, { family: 4, all: true }, (err, addresses) => {
+      cb(err, addresses);
+    });
+    return;
+  }
+
+  dns.lookup(hostname, { family: 4 }, (err, address, family) => {
+    cb(err, address, family);
+  });
+};
+
 const createSoapHttpAxios = ({
   soapForceIpv4,
   soapHttpTimeoutMs,
@@ -20,14 +62,14 @@ const createSoapHttpAxios = ({
   soapHttpTimeoutMs: number;
   wsdlBrowserHeaders: Record<string, string>;
 }) => {
-  const lookup = soapForceIpv4
-    ? (hostname: string, _opts: object, cb: (err: Error | null, address: string, family: number) => void) => {
-        dns.lookup(hostname, { family: 4 }, cb);
-      }
-    : undefined;
-
-  const httpsAgent = new https.Agent({ keepAlive: true, ...(lookup && { lookup }) });
-  const httpAgent = new http.Agent({ keepAlive: true, ...(lookup && { lookup }) });
+  const httpsAgent = new https.Agent({
+    keepAlive: true,
+    ...(soapForceIpv4 && { lookup: lookupIpv4Only }),
+  });
+  const httpAgent = new http.Agent({
+    keepAlive: true,
+    ...(soapForceIpv4 && { lookup: lookupIpv4Only }),
+  });
 
   return axios.create({
     httpsAgent,
