@@ -38,6 +38,7 @@ async function processMessage(params: {
   veriskCredential: IVeriskCredential;
   mvrCases: IMVRCaseDAL;
   soapClient: Client;
+  channel: Channel;
 }): Promise<void> {
   if (
     params.payload.caseMVRPaymentStatus === 'Paid By Insured' &&
@@ -136,6 +137,38 @@ async function processMessage(params: {
             base64Length: responseText.length,
           });
           pdfReceived = true;
+
+          /**
+           * Emit message to sync-salesforce-mvr-case-pdf-queue with the base64PDF
+           * ONLY IF the case has a valid PDF base64 string.
+           * assertQueue at startup creates the queue if it does not exist yet.
+           */
+          const published = params.channel.sendToQueue(
+            Queues.SYNC_SALESFORCE_MVR_CASE_PDF,
+            Buffer.from(
+              JSON.stringify({
+                mvrCaseId: params.payload.id,
+                base64PDF: responseText,
+              }),
+            ),
+            { persistent: true },
+          );
+
+          // false means the write buffer is full; message was accepted, wait before more publishes
+          if (!published) {
+            await new Promise<void>((resolve) => {
+              params.channel.once('drain', () => resolve());
+            });
+          }
+
+          logger.info(
+            `Emitted message to ${Queues.SYNC_SALESFORCE_MVR_CASE_PDF} for mvrCaseId: ${params.payload.id} with base64Length: ${responseText.length}`,
+            {
+              mvrCaseId: params.payload.id,
+              base64Length: responseText.length,
+            },
+          );
+
           break;
         }
 
@@ -220,9 +253,12 @@ async function startConsumer(): Promise<void> {
   const channel: Channel = await connection.createChannel();
 
   await channel.assertQueue(Queues.GET_DRIVER_VERISK, { durable: true });
+  // Creates the queue on first deploy if it does not exist yet
+  await channel.assertQueue(Queues.SYNC_SALESFORCE_MVR_CASE_PDF, { durable: true });
   channel.prefetch(1);
 
   logger.info(`Waiting for messages on queue: ${Queues.GET_DRIVER_VERISK}`);
+  logger.info(`Outbound queue ready: ${Queues.SYNC_SALESFORCE_MVR_CASE_PDF}`);
 
   await channel.consume(
     Queues.GET_DRIVER_VERISK,
@@ -238,6 +274,7 @@ async function startConsumer(): Promise<void> {
           mvrCases,
           soapClient,
           veriskCredential: activeVeriskCredential,
+          channel,
         });
 
         channel.ack(message);
