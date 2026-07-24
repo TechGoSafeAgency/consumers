@@ -377,10 +377,6 @@ async function startConsumer(): Promise<void> {
     throw new Error('EMAIL_NOTIFICATIONS_TO is not set');
   }
 
-  if (!emailSimpleSenderAddress) {
-    throw new Error('EMAIL_SIMPLE_SENDER_ADDRESS is not set');
-  }
-
   if (!rabbitmqUri) {
     throw new Error('RABBITMQ_URI is not set');
   }
