@@ -2,16 +2,34 @@
 
 Long-running workers that process RabbitMQ messages for the Go Safe Agency platform.
 
-## get-driver-verisk consumer
+Deploy **each consumer as its own service** (separate start command / Railway service). The default Docker `CMD` starts the Verisk consumer; override it for Salesforce.
 
-Consumes messages from the `get-driver-verisk-queue` queue, calls Verisk for an MVR PDF, and updates the matching MVR case in MongoDB.
+---
+
+## Consumers
+
+### 1. get-driver-verisk
+
+Consumes `get-driver-verisk-queue`, calls Verisk for an MVR PDF, updates MongoDB, then publishes `{ id, base64PDF }` to `sync-salesforce-mvr-case-pdf-queue`.
 
 | Item | Value |
 | --- | --- |
 | Source | `src/consumers/get-driver-verisk-queue.consumer.ts` |
-| Start command (after build) | `pnpm consumer:get-driver-verisk` |
-| Compiled entrypoint | `node dist/consumers/get-driver-verisk-queue.consumer.js` |
-| Queue | `get-driver-verisk-queue` |
+| Start command | `pnpm consumer:get-driver-verisk` |
+| Entrypoint | `node dist/consumers/get-driver-verisk-queue.consumer.js` |
+| Queue (in) | `get-driver-verisk-queue` |
+| Queue (out) | `sync-salesforce-mvr-case-pdf-queue` |
+
+### 2. sync-salesforce-mvr-case
+
+Consumes `sync-salesforce-mvr-case-pdf-queue`, syncs the PDF to Salesforce (EmailMessage → Attachment → emailSimple), optionally patches Case approval when sibling drivers are ready, then marks the MVR `SALESFORCE-PDF-SYNCED`.
+
+| Item | Value |
+| --- | --- |
+| Source | `src/consumers/sync-salesforce-mvr-case-queue.consumer.ts` |
+| Start command | `pnpm consumer:sync-salesforce-mvr-case` |
+| Entrypoint | `node dist/consumers/sync-salesforce-mvr-case-queue.consumer.js` |
+| Queue (in) | `sync-salesforce-mvr-case-pdf-queue` |
 
 ---
 
@@ -19,49 +37,58 @@ Consumes messages from the `get-driver-verisk-queue` queue, calls Verisk for an 
 
 - Node.js `>= 18.18`
 - [pnpm](https://pnpm.io/) `>= 9`
-- Access to:
-  - MongoDB (MVR cases + Verisk credentials collections)
-  - RabbitMQ (`get-driver-verisk-queue`)
-  - Verisk WSDL / SOAP endpoint
+- Access to MongoDB, RabbitMQ, and (per consumer) Verisk and/or Salesforce + Redis
 
 ---
 
 ## Environment variables
 
-Set these in your host (Railway Variables, Docker `-e`, systemd, etc.).
-
-### Required
+### Shared
 
 | Variable | Description |
 | --- | --- |
 | `MONGO_DB_URI` | MongoDB connection string |
 | `RABBITMQ_URI` | AMQP connection string |
-| `WSDL_URL` | Verisk WSDL URL (e.g. `https://expressnet.iix.com/web-services/Auth?WSDL`) |
-
-### Recommended
-
-| Variable | Default / notes |
-| --- | --- |
 | `NODE_ENV` | Use `production` in deployed environments |
-| `SOAP_FORCE_IPV4` | `true` if IPv6 routes to Verisk fail (also applies to WSDL prefetch) |
-| `SOAP_HTTP_TIMEOUT_MS` | `120000` |
-| `WSDL_PREFETCH` | `true` to download WSDL before SOAP client init (uses same IPv4-aware HTTP client) |
-| `WSDL_DISABLE_CACHE` | `true` to avoid stale WSDL cache |
-| `WSDL_LOCAL_PATH` | Optional path to a vendored `.wsdl` file (skips remote prefetch) |
 
-Verisk account credentials are **not** taken from env vars. The consumer loads the active credential from MongoDB at startup.
+### Verisk consumer
+
+| Variable | Description |
+| --- | --- |
+| `WSDL_URL` | Verisk WSDL URL |
+| `SOAP_FORCE_IPV4` | `true` recommended (also applies to WSDL prefetch) |
+| `SOAP_HTTP_TIMEOUT_MS` | Default `120000` |
+| `WSDL_PREFETCH` | `true` to download WSDL before SOAP client init |
+| `WSDL_DISABLE_CACHE` | `true` to avoid stale WSDL cache |
+| `WSDL_LOCAL_PATH` | Optional vendored `.wsdl` path |
+
+Verisk account credentials are loaded from MongoDB (active credential), not env vars.
+
+### Salesforce consumer
+
+| Variable | Description |
+| --- | --- |
+| `SALESFORCE_BASE_URL` | Salesforce instance URL |
+| `SF_API_VERSION` | e.g. `v53.0` |
+| `REDIS_URI` | Redis URL for Salesforce token cache |
+| `AUTH_API_URL` | Internal auth service base URL |
+| `AUTH_APP_KEY` | Auth header `x-auth-app` |
+| `APP_AUTH_ID` | Auth header `x-salesforce-auth-id` |
+| `APP_AUTH_SECRET` | Auth header `x-salesforce-auth-secret` |
+| `APPLICATION` | Used on auth POST fallback (default `SERVERLESS-SYNC-MVR-CASES`) |
+| `EMAIL_NOTIFICATIONS_TO` | Finance / ops recipient |
+| `EMAIL_STATUS` | Salesforce EmailMessage status (default `3`) |
+| `EMAIL_SIMPLE_SENDER_TYPE` | e.g. `CurrentUser` or `OrgWideEmailAddress` |
+| `EMAIL_SIMPLE_SENDER_ADDRESS` | Required when sender type is `OrgWideEmailAddress` |
+| `EMAIL_SIMPLE_LOG_ON_SEND` | Default true; set `false` / `0` to disable |
 
 ### Verisk / Imperva access
 
-Verisk sits behind **Imperva (Incapsula)**. A `403` whose HTML contains `_Incapsula_Resource` means the WAF is serving a bot challenge — not a simple firewall miss.
+Verisk sits behind **Imperva (Incapsula)**. A `403` with `_Incapsula_Resource` is a WAF bot challenge.
 
-Checklist with the provider:
-
-1. Use a **static outbound IPv4** for this Railway service.
-2. Ask them to allowlist that IP in **Imperva** with **bot-challenge bypass** (API/server allowlist), not only a network ACL.
-3. After deploy, check logs for `Public egress IP for Verisk/Imperva allowlisting` and confirm it matches what they allowlisted.
-
-Optional workaround for WSDL download only: vendor the WSDL (and related XSD imports) and set `WSDL_LOCAL_PATH`. SOAP calls to `expressnet.iix.com` still need Imperva access.
+1. Use a **static outbound IPv4** for the Verisk Railway service.
+2. Allowlist that IP in Imperva with **bot-challenge bypass**.
+3. Confirm the logged `Public egress IP for Verisk/Imperva allowlisting` matches the allowlist.
 
 ---
 
@@ -70,43 +97,26 @@ Optional workaround for WSDL download only: vendor the WSDL (and related XSD imp
 ```bash
 pnpm install
 pnpm build
+
+# Terminal 1 — Verisk
 pnpm consumer:get-driver-verisk
+
+# Terminal 2 — Salesforce
+pnpm consumer:sync-salesforce-mvr-case
 ```
-
-Load env vars from your platform or a local `.env` / `.env.local` file before starting.
-
-You should see logs indicating MongoDB is connected and the worker is waiting on `get-driver-verisk-queue`.
 
 ---
 
 ## Deploy (platform-agnostic)
 
-Any host that can build this repo and keep a long-running process works. The pattern is always the same:
+1. Build (`pnpm build`)
+2. Set env vars for that consumer
+3. Start the matching process
+4. Keep one replica per consumer (`prefetch(1)`)
 
-1. **Build** the TypeScript project  
-2. **Set** the environment variables above  
-3. **Start** the consumer process (not an HTTP server)  
-4. **Keep it running** (one replica is enough for `prefetch(1)`)
+### Docker
 
-### Start command
-
-Use one of:
-
-```bash
-pnpm consumer:get-driver-verisk
-```
-
-or:
-
-```bash
-node dist/consumers/get-driver-verisk-queue.consumer.js
-```
-
-> Important: this is a **queue worker**, not a web API. Do not rely on an HTTP health endpoint for this process unless you add one later.
-
-### Docker (optional)
-
-The included `Dockerfile` builds the project and starts the Verisk consumer by default:
+Default image starts the **Verisk** consumer:
 
 ```bash
 docker build -t go-safe-consumer:latest .
@@ -117,78 +127,75 @@ docker run --rm \
   -e NODE_ENV=production \
   -e SOAP_FORCE_IPV4=true \
   -e WSDL_PREFETCH=true \
-  -e WSDL_DISABLE_CACHE=true \
   go-safe-consumer:latest
+```
+
+For Salesforce, override the command:
+
+```bash
+docker run --rm \
+  -e MONGO_DB_URI=... \
+  -e RABBITMQ_URI=... \
+  -e SALESFORCE_BASE_URL=... \
+  -e REDIS_URI=... \
+  -e AUTH_API_URL=... \
+  -e AUTH_APP_KEY=... \
+  -e APP_AUTH_ID=... \
+  -e APP_AUTH_SECRET=... \
+  -e EMAIL_NOTIFICATIONS_TO=... \
+  -e EMAIL_SIMPLE_SENDER_TYPE=... \
+  -e EMAIL_SIMPLE_SENDER_ADDRESS=... \
+  -e NODE_ENV=production \
+  go-safe-consumer:latest \
+  node dist/consumers/sync-salesforce-mvr-case-queue.consumer.js
 ```
 
 ---
 
 ## Deploy on Railway
 
-Same steps as above, mapped to Railway’s UI/CLI.
+Create **two services** from the same repo/image.
 
-### 1. Create a service
+### Service A — Verisk
 
-- New service from this GitHub repo (or deploy from Dockerfile).
-- Use a **dedicated service** for this consumer so it can scale and restart independently.
+- Start command: `pnpm consumer:get-driver-verisk`
+- Vars: `MONGO_DB_URI`, `RABBITMQ_URI`, `WSDL_URL`, SOAP/WSDL settings
+- Prefer private networking for RabbitMQ
 
-### 2. Configure variables
+### Service B — Salesforce
 
-In **Variables**, add at least:
+- Start command: `pnpm consumer:sync-salesforce-mvr-case`
+- Vars: Mongo, RabbitMQ, Salesforce, Redis, auth, email settings
+- If using the Dockerfile, set the same start command so it does not use the Verisk default `CMD`
 
-- `MONGO_DB_URI`
-- `RABBITMQ_URI` (use the private/internal AMQP URL when RabbitMQ is on the same Railway project)
-- `WSDL_URL`
-- `NODE_ENV=production`
-- `SOAP_FORCE_IPV4=true`
-- `WSDL_PREFETCH=true`
-- `WSDL_DISABLE_CACHE=true`
-
-### 3. Set the start command
-
-In **Settings → Deploy**:
-
-- **Custom Start Command:**
-
-```bash
-pnpm consumer:get-driver-verisk
-```
-
-If the build already produces `dist/` and you prefer invoking Node directly:
-
-```bash
-node dist/consumers/get-driver-verisk-queue.consumer.js
-```
-
-If Railway builds with Nixpacks and does not run `pnpm build` automatically, set a **build command** of:
+Build command (if needed):
 
 ```bash
 pnpm install --frozen-lockfile && pnpm build
 ```
 
-### 4. Networking notes
+### Verify
 
-- The worker only needs outbound access to MongoDB, RabbitMQ, and Verisk.
-- No public HTTP port is required for this consumer.
-- Prefer Railway **private networking** for `RABBITMQ_URI` when possible.
+**Verisk logs:** Mongo connected, waiting on `get-driver-verisk-queue`, then `COMPLETED-VERISK-SYNC` / outbound publish.
 
-### 5. Verify
+**Salesforce logs:** Redis + Mongo connected, waiting on `sync-salesforce-mvr-case-pdf-queue`, then EmailMessage / Attachment / emailSimple success and `SALESFORCE-PDF-SYNCED`.
 
-1. Deploy and open service logs.
-2. Confirm lines similar to:
-   - MongoDB connected / DAL ready
-   - Waiting for messages on `get-driver-verisk-queue`
-3. Publish a test message to the queue and confirm the MVR case updates in MongoDB (`COMPLETED-VERISK-SYNC` or `FAILED-VERISK-SYNC`).
-
-### 6. Operations (first milestone)
-
-- Keep **one running instance** unless you intentionally redesign concurrency.
-- If Verisk or the worker fails for a message, recovery is **manual** for this milestone (failed messages are not requeued).
+Failed messages are not requeued in this milestone (manual recovery).
 
 ---
 
-## Message shape (queue)
+## Message shapes
 
-Messages are JSON documents shaped like an MVR case. Required processing fields include driver license state/number, name, DOB, payment fields, and `id`.
+### get-driver-verisk-queue (in)
 
-Cases with `caseMVRPaymentStatus === "Paid By Insured"` and `caseConfirmedPayment === false` are skipped (acked without calling Verisk).
+Full MVR case JSON (driver license, DOB, payment fields, `id`, etc.).
+
+Cases with `caseMVRPaymentStatus === "Paid By Insured"` and `caseConfirmedPayment === false` are skipped.
+
+### sync-salesforce-mvr-case-pdf-queue (in)
+
+```json
+{ "id": "<mvr-case-id>", "base64PDF": "<base64>" }
+```
+
+Sibling Case approval is deferred (not failed) until every driver on the Case has Verisk PDF + `requestIdVerisk`.

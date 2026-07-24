@@ -14,6 +14,12 @@ export interface IMVRCaseAuditTrailDetails {
   emailMessageId?: string;
   attachmentId?: string;
   caseApprovalPatchedToSalesforce?: boolean;
+  caseApprovalDeferredReason?: string;
+  notReadySiblingIds?: string[];
+  errorCode?: string;
+  errorMessage?: string;
+  responseData?: unknown;
+  message?: string;
 }
 
 export interface IMVRCaseAuditTrailEntry {
@@ -69,4 +75,17 @@ export interface IMVRCaseDAL {
   updateMVRCaseBase64PDF: (id: string, base64PDF: string) => Promise<void>;
   updateMVRCaseRequestIdVerisk: (id: string, requestId: string) => Promise<void>;
   updateMVRCaseRequestStrVerisk: (id: string, requestStr: string) => Promise<void>;
+  pushAuditTrail: (id: string, auditTrail: IMVRCaseAuditTrailEntry) => Promise<void>;
+  getSiblingMvrCases: (caseId: string, caseNumber?: string | null) => Promise<IMVRCase[]>;
+  updateMVRCaseApprovalStatus: (params: {
+    id: string;
+    caseApprovalStatus: string;
+    processingStatus: string;
+    emailMessageId: string;
+    attachmentId: string;
+    caseApprovalPatchedToSalesforce: boolean;
+    caseNumber?: string | null;
+    caseApprovalDeferredReason?: string;
+    notReadySiblingIds?: string[];
+  }) => Promise<void>;
 }

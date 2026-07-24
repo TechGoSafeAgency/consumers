@@ -40,5 +40,8 @@ RUN mkdir -p logs && chown -R node:node /app
 
 USER node
 
-# Long-running RabbitMQ consumer (no HTTP server)
+# Long-running RabbitMQ consumers (no HTTP server).
+# Default: Verisk consumer. For Salesforce, override CMD / Railway start command:
+#   node dist/consumers/sync-salesforce-mvr-case-queue.consumer.js
+#   or: pnpm consumer:sync-salesforce-mvr-case
 CMD ["node", "dist/consumers/get-driver-verisk-queue.consumer.js"]

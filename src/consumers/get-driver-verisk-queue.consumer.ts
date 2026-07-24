@@ -44,7 +44,7 @@ async function processMessage(params: {
     params.payload.caseMVRPaymentStatus === 'Paid By Insured' &&
     params.payload.caseConfirmedPayment === false
   ) {
-    logger.info('Skipping Verisk sync — payment not confirmed for insured case', {
+    logger.info('⏭️ Skipping Verisk sync — payment not confirmed for insured case', {
       mvrCaseId: params.payload.id,
       caseMVRPaymentStatus: params.payload.caseMVRPaymentStatus,
       caseConfirmedPayment: params.payload.caseConfirmedPayment,
@@ -66,13 +66,13 @@ async function processMessage(params: {
   );
 
   if (missingRequiredFields.length > 0) {
-    logger.error('Missing required fields', {
+    logger.error('❌ Missing required fields', {
       mvrCaseId: params.payload.id,
       missingRequiredFields,
     });
 
     await params.mvrCases.updateMVRCaseStatus(params.payload.id, MVRProcessingStatus.FAILED_VERISK_SYNC);
-    logger.info('Updated MVR case status to FAILED_VERISK_SYNC', { mvrCaseId: params.payload.id });
+    logger.info('⏭️ Updated MVR case status to FAILED_VERISK_SYNC', { mvrCaseId: params.payload.id });
     return;
   }
 
@@ -87,16 +87,16 @@ async function processMessage(params: {
     const acceptResponse = veriskUtils.extractResponseString(sendResult);
 
     if (!acceptResponse || !acceptResponse.startsWith('Accept:')) {
-      logger.error('Failed to extract Verisk request ID', { sendResult });
+      logger.error('❌ Failed to extract Verisk request ID', { sendResult });
 
       await params.mvrCases.updateMVRCaseStatus(params.payload.id, MVRProcessingStatus.FAILED_VERISK_SYNC);
 
-      logger.info('Updated MVR case status to FAILED_VERISK_SYNC', { mvrCaseId: params.payload.id });
+      logger.info('⏭️ Updated MVR case status to FAILED_VERISK_SYNC', { mvrCaseId: params.payload.id });
       return;
     }
 
     const requestId = acceptResponse.substring(7, 16);
-    logger.info('Verisk request ID extracted', { requestId, acceptResponse });
+    logger.info('✅ Verisk request ID extracted', { requestId, acceptResponse });
 
     await params.mvrCases.updateMVRCaseRequestIdVerisk(params.payload.id, requestId);
     await params.mvrCases.updateMVRCaseRequestStrVerisk(params.payload.id, driverRequestPayload);
@@ -109,7 +109,7 @@ async function processMessage(params: {
       await new Promise((resolve) => setTimeout(resolve, VERISK_REQUEST_ID_POLL_INTERVAL_MS));
       attempts++;
 
-      logger.info(`Attempt ${attempts}/${MAX_VERISK_REQUEST_ID_ATTEMPTS} to poll for PDF...`);
+      logger.info(`🔄 Attempt ${attempts}/${MAX_VERISK_REQUEST_ID_ATTEMPTS} to poll for PDF...`);
 
       try {
         const [res] = await params.soapClient.getPdfResponse2Async({ arg0: pollString });
@@ -117,14 +117,14 @@ async function processMessage(params: {
 
         if (responseText.startsWith('Error:')) {
           if (responseText.includes('not yet available')) {
-            logger.info('Server processing...');
+            logger.info('🔄 Server processing...');
             continue;
           }
           throw new Error(`Error from service: ${responseText}`);
         }
 
         if (responseText.length > MIN_PDF_BASE64_LENGTH) {
-          logger.info('PDF Base64 Received!');
+          logger.info('✅ PDF Base64 Received!');
 
           await params.mvrCases.updateMVRCaseBase64PDF(params.payload.id, responseText);
           await params.mvrCases.updateMVRCaseStatus(
@@ -132,7 +132,7 @@ async function processMessage(params: {
             MVRProcessingStatus.COMPLETED_VERISK_SYNC,
           );
 
-          logger.info('Updated MVR case with Verisk PDF and COMPLETED_VERISK_SYNC', {
+          logger.info('✅ Updated MVR case with Verisk PDF and COMPLETED_VERISK_SYNC', {
             mvrCaseId: params.payload.id,
             base64Length: responseText.length,
           });
@@ -147,7 +147,7 @@ async function processMessage(params: {
             Queues.SYNC_SALESFORCE_MVR_CASE_PDF,
             Buffer.from(
               JSON.stringify({
-                mvrCaseId: params.payload.id,
+                id: params.payload.id,
                 base64PDF: responseText,
               }),
             ),
@@ -162,9 +162,9 @@ async function processMessage(params: {
           }
 
           logger.info(
-            `Emitted message to ${Queues.SYNC_SALESFORCE_MVR_CASE_PDF} for mvrCaseId: ${params.payload.id} with base64Length: ${responseText.length}`,
+            `📤 Emitted message to ${Queues.SYNC_SALESFORCE_MVR_CASE_PDF} for id: ${params.payload.id} with base64Length: ${responseText.length}`,
             {
-              mvrCaseId: params.payload.id,
+              id: params.payload.id,
               base64Length: responseText.length,
             },
           );
@@ -174,11 +174,11 @@ async function processMessage(params: {
 
         throw new Error('Timeout waiting for PDF');
       } catch (error) {
-        logger.error('Failed to poll for PDF', { error });
+        logger.error('❌ Failed to poll for PDF', { error });
 
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes('not yet available')) {
-          logger.info('Server processing...');
+          logger.info('🔄 Server processing...');
           continue;
         }
 
@@ -190,9 +190,9 @@ async function processMessage(params: {
       throw new Error('Timeout waiting for PDF');
     }
   } catch (error) {
-    logger.error('Failed to send request to Verisk', { error });
+    logger.error('❌ Failed to send request to Verisk', { error });
     await params.mvrCases.updateMVRCaseStatus(params.payload.id, MVRProcessingStatus.FAILED_VERISK_SYNC);
-    logger.info('Updated MVR case status to FAILED_VERISK_SYNC', { mvrCaseId: params.payload.id });
+    logger.info('⏭️ Updated MVR case status to FAILED_VERISK_SYNC', { mvrCaseId: params.payload.id });
     return;
   }
 }
@@ -201,13 +201,13 @@ async function logPublicEgressIp(): Promise<void> {
   try {
     const res = await fetch('https://api.ipify.org?format=json');
     if (!res.ok) {
-      logger.warn(`Could not determine public egress IP (HTTP ${res.status})`);
+      logger.warn(`⏭️ Could not determine public egress IP (HTTP ${res.status})`);
       return;
     }
     const data = (await res.json()) as { ip?: string };
-    logger.info('Public egress IP for Verisk/Imperva allowlisting', { egressIp: data.ip });
+    logger.info('🚀 Public egress IP for Verisk/Imperva allowlisting', { egressIp: data.ip });
   } catch (error) {
-    logger.warn('Could not determine public egress IP', { error });
+    logger.warn('⏭️ Could not determine public egress IP', { error });
   }
 }
 
@@ -241,7 +241,7 @@ async function startConsumer(): Promise<void> {
 
   const mvrCases = mvrCaseDALFactory(mongoDB);
   const veriskCredentials = veriskCredentialDALFactory(mongoDB);
-  logger.info('MongoDB connected; MVR case DAL ready');
+  logger.info('🚀 MongoDB connected; MVR case DAL ready');
 
   const activeVeriskCredential = await veriskCredentials.getActiveVeriskCredentials();
 
@@ -257,8 +257,8 @@ async function startConsumer(): Promise<void> {
   await channel.assertQueue(Queues.SYNC_SALESFORCE_MVR_CASE_PDF, { durable: true });
   channel.prefetch(1);
 
-  logger.info(`Waiting for messages on queue: ${Queues.GET_DRIVER_VERISK}`);
-  logger.info(`Outbound queue ready: ${Queues.SYNC_SALESFORCE_MVR_CASE_PDF}`);
+  logger.info(`⏳ Waiting for messages on queue: ${Queues.GET_DRIVER_VERISK}`);
+  logger.info(`📤 Outbound queue ready: ${Queues.SYNC_SALESFORCE_MVR_CASE_PDF}`);
 
   await channel.consume(
     Queues.GET_DRIVER_VERISK,
@@ -267,7 +267,7 @@ async function startConsumer(): Promise<void> {
 
       try {
         const payload: IMVRCase = JSON.parse(message.content.toString());
-        logger.info('Received message from get-driver-verisk-queue', { payload });
+        logger.info('📥 Received message from get-driver-verisk-queue', { id: payload.id });
 
         await processMessage({
           payload,
@@ -279,7 +279,7 @@ async function startConsumer(): Promise<void> {
 
         channel.ack(message);
       } catch (error) {
-        logger.error('Failed to process Verisk message', { error });
+        logger.error('❌ Failed to process Verisk message', { error });
         channel.nack(message, false, false);
       }
     },
@@ -287,14 +287,14 @@ async function startConsumer(): Promise<void> {
   );
 
   const shutdown = async (signal: string) => {
-    logger.info(`Received ${signal}, shutting down consumer`);
+    logger.info(`⏭️ Received ${signal}, shutting down consumer`);
     try {
       await channel.close();
       await connection.close();
       await mongoClient.close();
     } catch (error) {
-      console.error('Error during consumer shutdown', error);
-      logger.error('Error during consumer shutdown', { error });
+      console.error('❌ Error during consumer shutdown', error);
+      logger.error('❌ Error during consumer shutdown', { error });
     }
     process.exit(0);
   };
@@ -309,7 +309,7 @@ async function startConsumer(): Promise<void> {
 
 startConsumer().catch((error) => {
   // Ensure Railway/Docker always see the failure even if Winston buffers
-  console.error('Failed to start Verisk consumer', error);
-  logger.error('Failed to start Verisk consumer', { error });
+  console.error('❌ Failed to start Verisk consumer', error);
+  logger.error('❌ Failed to start Verisk consumer', { error });
   process.exit(1);
 });
