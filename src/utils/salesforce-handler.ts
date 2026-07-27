@@ -83,7 +83,7 @@ export const salesforceHandlerFactory = ({
 
       return { id: response.data.id };
     } catch (error: any) {
-      logger.error('Failed to post Salesforce email message', { error });
+      logger.error('[Salesforce] Failed to post Salesforce email message', { error });
       throw new Error(`posting error: ${error.message}`);
     }
   },
@@ -112,7 +112,7 @@ export const salesforceHandlerFactory = ({
 
       return { id: response.data.id };
     } catch (error: any) {
-      logger.error('Failed to post Salesforce email attachment', { error });
+      logger.error('[Salesforce] Failed to post Salesforce email attachment', { error });
       throw new Error(`posting error: ${error.message}`);
     }
   },
@@ -149,7 +149,7 @@ export const salesforceHandlerFactory = ({
 
       return { id: String(resultId) };
     } catch (error: any) {
-      logger.error('Failed to post Salesforce email simple', { error });
+      logger.error('[Salesforce] Failed to post Salesforce email simple', { error });
       throw new Error(`posting error: ${error.message}`);
     }
   },
@@ -179,7 +179,7 @@ export const salesforceHandlerFactory = ({
       // Salesforce PATCH often returns 204 No Content with no body id
       return { id: response.data?.id ?? caseId };
     } catch (error: any) {
-      logger.error('Failed to patch Salesforce case approval status', { error });
+      logger.error('[Salesforce] Failed to patch Salesforce case approval status', { error });
       throw new Error(`patching error: ${error.message}`);
     }
   },

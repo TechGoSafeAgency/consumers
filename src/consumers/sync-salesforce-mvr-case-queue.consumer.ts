@@ -23,6 +23,14 @@ import { MVRProcessingStatus } from '@/types/enums/mvr-processing-status';
 const COMPLETED_CASE_APPROVAL_STATUS = 'Completed';
 const MIN_PDF_BASE64_LENGTH = 100;
 const SERVICE_NAME = 'sync-salesforce-mvr-case-queue';
+const SALESFORCE_AUTH_TOKEN_REDIS_KEY = 'salesforce-auth-token';
+const SALESFORCE_AUTH_TOKEN_TTL_SECONDS = 1200;
+
+type SalesforceAuthTokenHolder = { token: string };
+type SalesforceAuthRedisClient = {
+  del: (key: string) => Promise<number>;
+  set: (key: string, value: string, options: { EX: number }) => Promise<string | null>;
+};
 
 const VERISK_PIPELINE_COMPLETE_FOR_CASE_GATE = new Set<string>([
   MVRProcessingStatus.COMPLETED_VERISK_SYNC,
@@ -37,6 +45,23 @@ function isMvrCaseVeriskReadyForCaseApproval(doc: IMVRCase): boolean {
   const hasPdf = typeof doc.base64PDF === 'string' && doc.base64PDF.trim().length > 0;
   const hasRequestId = doc.requestIdVerisk != null && String(doc.requestIdVerisk).trim() !== '';
   return hasPdf && hasRequestId;
+}
+
+function isInvalidSalesforceSession(error: ISalesforceError): boolean {
+  if (error.errorCode === 'INVALID_SESSION_ID') {
+    return true;
+  }
+
+  const message = error.message?.toLowerCase() ?? '';
+  if (message.includes('session expired') || message.includes('invalid session')) {
+    return true;
+  }
+
+  if (typeof error.message === 'string' && /^HTTP 401\b/.test(error.message)) {
+    return true;
+  }
+
+  return false;
 }
 
 async function authenticateSalesforce(params: {
@@ -93,6 +118,58 @@ async function authenticateSalesforce(params: {
   }
 }
 
+async function refreshSalesforceAuthToken(params: {
+  redisClient: SalesforceAuthRedisClient;
+  tokenHolder: SalesforceAuthTokenHolder;
+  mongoDBUri: string;
+}): Promise<string> {
+  const { redisClient, tokenHolder, mongoDBUri } = params;
+
+  await redisClient.del(SALESFORCE_AUTH_TOKEN_REDIS_KEY);
+  logger.info('🔄 Salesforce session invalid; refreshing token and retrying');
+
+  const token = await authenticateSalesforce({
+    authAppKey: config.authAppKey,
+    appAuthId: config.appAuthId,
+    appAuthSecret: config.appAuthSecret,
+    authApiUrl: config.authApiUrl,
+    mongoDBUri,
+    application: config.application,
+  });
+
+  await redisClient.set(SALESFORCE_AUTH_TOKEN_REDIS_KEY, token, {
+    EX: SALESFORCE_AUTH_TOKEN_TTL_SECONDS,
+  });
+  tokenHolder.token = token;
+  logger.info('✅ Salesforce auth token refreshed');
+
+  return token;
+}
+
+async function withSalesforceSessionRetry(
+  call: (token: string) => Promise<ISalesforceError | ISalesforceResponse>,
+  params: {
+    tokenHolder: SalesforceAuthTokenHolder;
+    redisClient: SalesforceAuthRedisClient;
+    mongoDBUri: string;
+  },
+): Promise<ISalesforceError | ISalesforceResponse> {
+  const { tokenHolder, redisClient, mongoDBUri } = params;
+
+  const firstResponse = await call(tokenHolder.token);
+  if ('id' in firstResponse || !isInvalidSalesforceSession(firstResponse)) {
+    return firstResponse;
+  }
+
+  logger.warn('⚠️ Salesforce returned invalid session; refreshing token and retrying once', {
+    errorCode: firstResponse.errorCode,
+    message: firstResponse.message,
+  });
+
+  await refreshSalesforceAuthToken({ redisClient, tokenHolder, mongoDBUri });
+  return call(tokenHolder.token);
+}
+
 async function recordSalesforceFailure(params: {
   syncMVRCaseLog: ISyncMVRCaseLogDAL;
   mvrCases: IMVRCaseDAL;
@@ -133,11 +210,22 @@ async function processMessage(params: {
   mvrCases: IMVRCaseDAL;
   syncMVRCaseLog: ISyncMVRCaseLogDAL;
   salesforceHandler: ISalesforceHandler;
-  salesforceAuthToken: string;
+  tokenHolder: SalesforceAuthTokenHolder;
+  redisClient: SalesforceAuthRedisClient;
+  mongoDBUri: string;
 }) {
   try {
-    const { payload, mvrCases, syncMVRCaseLog, salesforceHandler, salesforceAuthToken } = params;
+    const {
+      payload,
+      mvrCases,
+      syncMVRCaseLog,
+      salesforceHandler,
+      tokenHolder,
+      redisClient,
+      mongoDBUri,
+    } = params;
     const { id, base64PDF } = payload;
+    const sessionRetryParams = { tokenHolder, redisClient, mongoDBUri };
 
     if (!id) {
       throw new Error('MVR case ID is required');
@@ -169,11 +257,14 @@ async function processMessage(params: {
       FromAddress: config.emailSimpleSenderAddress,
     };
 
-    const responseEmailSF: ISalesforceError | ISalesforceResponse =
-      await salesforceHandler.postSalesforceEmailMessage({
-        salesforceAuthToken,
-        emailPayload,
-      });
+    const responseEmailSF: ISalesforceError | ISalesforceResponse = await withSalesforceSessionRetry(
+      (salesforceAuthToken) =>
+        salesforceHandler.postSalesforceEmailMessage({
+          salesforceAuthToken,
+          emailPayload,
+        }),
+      sessionRetryParams,
+    );
 
     if (!('id' in responseEmailSF)) {
       logger.error('❌ Failed to post Salesforce email message', { responseEmailSF });
@@ -197,11 +288,14 @@ async function processMessage(params: {
       ContentType: 'application/pdf',
     };
 
-    const responseAttachmentSF: ISalesforceError | ISalesforceResponse =
-      await salesforceHandler.postSalesforceEmailAttachment({
-        salesforceAuthToken,
-        attachmentPayload,
-      });
+    const responseAttachmentSF: ISalesforceError | ISalesforceResponse = await withSalesforceSessionRetry(
+      (salesforceAuthToken) =>
+        salesforceHandler.postSalesforceEmailAttachment({
+          salesforceAuthToken,
+          attachmentPayload,
+        }),
+      sessionRetryParams,
+    );
 
     if (!('id' in responseAttachmentSF)) {
       logger.error('❌ Failed to post Salesforce email attachment', { responseAttachmentSF });
@@ -256,11 +350,14 @@ async function processMessage(params: {
           : undefined,
     };
 
-    const responseEmailSimpleSF: ISalesforceError | ISalesforceResponse =
-      await salesforceHandler.postSalesforceEmailSimple({
-        salesforceAuthToken,
-        emailSimplePayload,
-      });
+    const responseEmailSimpleSF: ISalesforceError | ISalesforceResponse = await withSalesforceSessionRetry(
+      (salesforceAuthToken) =>
+        salesforceHandler.postSalesforceEmailSimple({
+          salesforceAuthToken,
+          emailSimplePayload,
+        }),
+      sessionRetryParams,
+    );
 
     if (!('id' in responseEmailSimpleSF)) {
       logger.error('❌ Failed to post Salesforce email simple', { responseEmailSimpleSF });
@@ -296,11 +393,15 @@ async function processMessage(params: {
       };
 
       const responseCaseApprovalSF: ISalesforceError | ISalesforceResponse =
-        await salesforceHandler.patchSalesforceCaseApprovalStatus({
-          salesforceAuthToken,
-          caseId: mvrCase.caseId,
-          casePayload: caseApprovalPayload,
-        });
+        await withSalesforceSessionRetry(
+          (salesforceAuthToken) =>
+            salesforceHandler.patchSalesforceCaseApprovalStatus({
+              salesforceAuthToken,
+              caseId: mvrCase.caseId!,
+              casePayload: caseApprovalPayload,
+            }),
+          sessionRetryParams,
+        );
 
       if (!('id' in responseCaseApprovalSF)) {
         logger.error('❌ Failed to patch Salesforce case approval status', { responseCaseApprovalSF });
@@ -409,14 +510,14 @@ async function startConsumer(): Promise<void> {
   await redisClient.connect();
   logger.info('🚀 Redis connected');
 
-  let salesforceAuthToken = '';
-  const cachedSalesforceAuthToken = await redisClient.get('salesforce-auth-token');
+  const tokenHolder: SalesforceAuthTokenHolder = { token: '' };
+  const cachedSalesforceAuthToken = await redisClient.get(SALESFORCE_AUTH_TOKEN_REDIS_KEY);
 
   if (cachedSalesforceAuthToken) {
     logger.info('✅ Salesforce auth token found in cache');
-    salesforceAuthToken = cachedSalesforceAuthToken;
+    tokenHolder.token = cachedSalesforceAuthToken;
   } else {
-    salesforceAuthToken = await authenticateSalesforce({
+    tokenHolder.token = await authenticateSalesforce({
       authAppKey: config.authAppKey,
       appAuthId: config.appAuthId,
       appAuthSecret: config.appAuthSecret,
@@ -425,7 +526,9 @@ async function startConsumer(): Promise<void> {
       application: config.application,
     });
 
-    await redisClient.set('salesforce-auth-token', salesforceAuthToken, { EX: 1200 });
+    await redisClient.set(SALESFORCE_AUTH_TOKEN_REDIS_KEY, tokenHolder.token, {
+      EX: SALESFORCE_AUTH_TOKEN_TTL_SECONDS,
+    });
     logger.info('✅ Salesforce auth token set');
   }
 
@@ -463,7 +566,9 @@ async function startConsumer(): Promise<void> {
           mvrCases,
           syncMVRCaseLog,
           salesforceHandler,
-          salesforceAuthToken,
+          tokenHolder,
+          redisClient,
+          mongoDBUri,
         });
 
         channel.ack(message);
