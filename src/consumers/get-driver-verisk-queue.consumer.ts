@@ -11,7 +11,7 @@ import { mvrCaseDALFactory } from '@/dal/mvr-case';
 import { config } from '@/config';
 import { MVRProcessingStatus } from '@/types/enums/mvr-processing-status';
 import { veriskCredentialDALFactory } from '@/dal/verisk-credential';
-import { IVeriskCredential } from '@/types/interfaces/dal/IVeriskCredentialDAL';
+import { IVeriskCredential, IVeriskCredentialDAL } from '@/types/interfaces/dal/IVeriskCredentialDAL';
 
 const MAX_VERISK_REQUEST_ID_ATTEMPTS = 10;
 const VERISK_REQUEST_ID_POLL_INTERVAL_MS = 4000;
@@ -35,8 +35,8 @@ const wsdlHandler = wsdlHandlerFactory({
 
 async function processMessage(params: {
   payload: IMVRCase;
-  veriskCredential: IVeriskCredential;
   mvrCases: IMVRCaseDAL;
+  veriskCredentialsDAL: IVeriskCredentialDAL;
   soapClient: Client;
   channel: Channel;
 }): Promise<void> {
@@ -76,10 +76,16 @@ async function processMessage(params: {
     return;
   }
 
+  const activeVeriskCredential: IVeriskCredential | null = await params.veriskCredentialsDAL.getActiveVeriskCredentials();
+
+  if (!activeVeriskCredential) {
+    throw new Error('No active Verisk credential found');
+  }
+
   const driverRequestPayload = veriskUtils.buildMvrRequest(driverPayload, {
-    user: params.veriskCredential.user,
-    password: params.veriskCredential.password,
-    account: params.veriskCredential.account,
+    user: activeVeriskCredential.user,
+    password: activeVeriskCredential.password,
+    account: activeVeriskCredential.account,
   });
 
   try {
@@ -101,7 +107,7 @@ async function processMessage(params: {
     await params.mvrCases.updateMVRCaseRequestIdVerisk(params.payload.id, requestId);
     await params.mvrCases.updateMVRCaseRequestStrVerisk(params.payload.id, driverRequestPayload);
 
-    const pollString = veriskUtils.buildPdfPollString(requestId, params.veriskCredential);
+    const pollString = veriskUtils.buildPdfPollString(requestId, activeVeriskCredential);
     let pdfReceived = false;
     let attempts = 0;
 
@@ -240,14 +246,8 @@ async function startConsumer(): Promise<void> {
   const mongoDB = mongoClient.db();
 
   const mvrCases = mvrCaseDALFactory(mongoDB);
-  const veriskCredentials = veriskCredentialDALFactory(mongoDB);
+  const veriskCredentialsDAL = veriskCredentialDALFactory(mongoDB);
   logger.info('🚀 MongoDB connected; MVR case DAL ready');
-
-  const activeVeriskCredential = await veriskCredentials.getActiveVeriskCredentials();
-
-  if (!activeVeriskCredential) {
-    throw new Error('No active Verisk credential found');
-  }
 
   const connection: ChannelModel = await amqp.connect(rabbitmqUri);
   const channel: Channel = await connection.createChannel();
@@ -273,7 +273,7 @@ async function startConsumer(): Promise<void> {
           payload,
           mvrCases,
           soapClient,
-          veriskCredential: activeVeriskCredential,
+          veriskCredentialsDAL,
           channel,
         });
 
