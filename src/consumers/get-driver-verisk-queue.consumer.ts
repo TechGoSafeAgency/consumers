@@ -82,11 +82,15 @@ async function processMessage(params: {
     throw new Error('No active Verisk credential found');
   }
 
+  logger.info(`⏭️ Verisk credentials to process message: [USER]: ${activeVeriskCredential.user} [PASSWORD]: ${activeVeriskCredential.password}`)
+
   const driverRequestPayload = veriskUtils.buildMvrRequest(driverPayload, {
     user: activeVeriskCredential.user,
     password: activeVeriskCredential.password,
     account: activeVeriskCredential.account,
   });
+
+  logger.info(`⏭️ Verisk PAYLOAD request: ${driverRequestPayload}`)
 
   try {
     const [sendResult] = await params.soapClient.sendRequest2Async({ arg0: driverRequestPayload });
