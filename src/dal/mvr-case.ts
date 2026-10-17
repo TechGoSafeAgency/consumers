@@ -68,4 +68,7 @@ export const mvrCaseDALFactory = (mongoDB: Db): IMVRCaseDAL => ({
       },
     );
   },
+  updateMVRCaseError: async (id: string, error: string) => {
+    await mongoDB.collection<IMVRCase>(Collections.MVR_CASES_BACKUP_1).updateOne({ id }, { $set: { errorMessage: error } });
+  },
 });

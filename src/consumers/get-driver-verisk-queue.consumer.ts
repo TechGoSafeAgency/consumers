@@ -100,6 +100,7 @@ async function processMessage(params: {
       logger.error('❌ Failed to extract Verisk request ID', { sendResult });
 
       await params.mvrCases.updateMVRCaseStatus(params.payload.id, MVRProcessingStatus.FAILED_VERISK_SYNC);
+      await params.mvrCases.updateMVRCaseError(params.payload.id, sendResult.return.$value || `Unknown error: ${sendResult}`);
 
       logger.info('⏭️ Updated MVR case status to FAILED_VERISK_SYNC', { mvrCaseId: params.payload.id });
       return;

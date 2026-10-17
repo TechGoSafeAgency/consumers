@@ -88,4 +88,5 @@ export interface IMVRCaseDAL {
     caseApprovalDeferredReason?: string;
     notReadySiblingIds?: string[];
   }) => Promise<void>;
+  updateMVRCaseError: (id: string, error: string) => Promise<void>;
 }
