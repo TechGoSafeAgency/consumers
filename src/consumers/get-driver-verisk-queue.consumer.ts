@@ -72,6 +72,8 @@ async function processMessage(params: {
     });
 
     await params.mvrCases.updateMVRCaseStatus(params.payload.id, MVRProcessingStatus.FAILED_VERISK_SYNC);
+    await params.mvrCases.updateMVRCaseError(params.payload.id, `Missing required fields: ${missingRequiredFields.join(', ')}`);
+
     logger.info('⏭️ Updated MVR case status to FAILED_VERISK_SYNC', { mvrCaseId: params.payload.id });
     return;
   }
